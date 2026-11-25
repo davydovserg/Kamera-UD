@@ -99,7 +99,7 @@
   .step { padding:20px; }
   .step .n { font:700 13px ui-monospace,Consolas,monospace; color:var(--acc); }
   .step h4 { font-size:17px; margin:10px 0 6px; } .step p { color:#aab2bd; font-size:14px; }
-  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .cards { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   @media (max-width:1000px){ .cards{ grid-template-columns:1fr 1fr; } }
   @media (max-width:520px){ .cards{ grid-template-columns:1fr; } }
   .card { padding:20px; display:flex; flex-direction:column; gap:10px; cursor:pointer; transition:.15s; }
@@ -124,7 +124,7 @@
       <p>Подключаемся к вашим камерам, без замены оборудования. ИИ круглосуточно смотрит потоки, а вы получаете короткое сообщение: время, камера, что случилось.</p>
       <div class="kpis">
         <div class="kpi"><b>50</b><span>камер на объекте</span></div>
-        <div class="kpi"><b>4</b><span>сценария</span></div>
+        <div class="kpi"><b>6</b><span>сценариев</span></div>
         <div class="kpi"><b>~1 с</b><span>от кадра до события</span></div>
       </div>
     </div>
@@ -212,11 +212,18 @@ const SCENES = [
   { key:'plates', icon:'🔢', title:'Номера машин', sub:'4 камеры · въезды', img:'plate', cam:'Камера 31 · Въезд, шлагбаум',
     count:'4', card:'Читаем номер каждой въезжающей машины, ведём журнал и сверяем со списком жителей. О чужих — сразу сообщение.',
     explain:'Номер найден и прочитан моделью: <b>Е123КХ 00</b>. Сверяем со списком жителей: если номера там нет, сразу уходит сообщение. В журнале остаются все проезды за день.' },
+  { key:'danger', icon:'⚠️', title:'Опасная зона', sub:'крыши, техзоны, котлован', img:'roof', cam:'Камера 22 · Кровля, секция 3',
+    count:'по проекту', card:'Человек там, где ходить нельзя или опасно: крыша, трансформаторная, техэтаж, котлован, проезд в паркинге.',
+    zone:[[0.2,0.16],[0.74,0.13],[0.79,0.41],[0.18,0.44]], zoneName:'Кровля · вход запрещён',
+    explain:'Зона кровли обведена. Модель нашла человека на крыше. Если он в зоне дольше <b>2 секунд</b>, сразу уходит сообщение: круглосуточно, без расписания.' },
+  { key:'fence', icon:'🚧', title:'Вдоль забора', sub:'периметр территории', img:null, cam:'Камера 12 · Забор, южная сторона',
+    count:'по проекту', card:'Кто-то ходит вдоль ограждения или долго стоит у забора. Выделяем полосу вдоль периметра.',
+    explain:'Синяя полоса вдоль ограждения. ИИ ведёт каждого человека и рисует его путь. Тревога, если человек прошёл вдоль забора заметное расстояние или стоит у него дольше <b>15 секунд</b>. Прохожие, которые просто пересекают полосу, тревогу не вызывают. Кадры с настоящего видео, тревогу дал наш сценарий.' },
   { key:'health', icon:'📡', title:'Исправность камер', sub:'21 камера · весь объект', img:null, cam:'Все камеры объекта',
     count:'21', card:'Камера отключилась, картинка зависла, объектив закрыли или залепили. Сообщаем о сбое и о восстановлении.',
     explain:'Следим за каждой камерой: идёт ли поток, меняется ли картинка, не закрыт ли объектив. Пишем, когда камера пропала и когда она снова заработала.' },
 ];
-const OTHER_IMGS = ['yard_vorkuta','parking_msk','parking_ekb','fire_car','plate'];
+const OTHER_IMGS = ['yard_vorkuta','parking_msk','parking_ekb','fire_car','plate','roof','fence_0'];
 
 let cur = 0, auto = true, timers = [], tourTimer, sceneStart = 0;
 const later = (ms, fn) => timers.push(setTimeout(fn, ms));
@@ -226,7 +233,7 @@ function renderSide() {
   $('#sc-list').innerHTML = SCENES.map((s,i) => `<button class="sc-btn ${i===cur?'on':''}" data-i="${i}">
      <span class="ic">${s.icon}</span><span><b>${s.title}</b><small>${s.sub}</small></span><span class="bar"></span></button>`).join('');
   document.querySelectorAll('.sc-btn').forEach(b => b.onclick = () => { setAuto(false); show(+b.dataset.i); });
-  $('#cards').innerHTML = SCENES.map((s,i) => `<div class="box card" data-i="${i}"><div class="num">${s.count} <small>камер</small></div>
+  $('#cards').innerHTML = SCENES.map((s,i) => `<div class="box card" data-i="${i}"><div class="num">${isNaN(s.count) ? `<small style="font-size:16px;color:var(--text)">${s.count}</small>` : `${s.count} <small>камер</small>`}</div>
      <h4>${s.icon} ${s.title}</h4><p>${s.card}</p><div class="go">Показать на пульте →</div></div>`).join('');
   document.querySelectorAll('.card').forEach(c => c.onclick = () => { setAuto(false); show(+c.dataset.i); $('#demo').scrollIntoView({block:'start'}); });
 }
@@ -285,7 +292,7 @@ function show(i) {
   $('#cam-title').innerHTML = `${s.cam}<small>${s.title}</small>`;
   $('#explain').innerHTML = s.explain;
   $('#toast').className = 'toast'; $('#journal').style.display = 'none';
-  ({fire: playFire, parking: playParking, plates: playPlates, health: playHealth})[s.key](s);
+  ({fire: playFire, parking: playParking, plates: playPlates, danger: playDanger, fence: playFence, health: playHealth})[s.key](s);
   if (auto) { clearTimeout(tourTimer); tourTimer = setTimeout(() => show((cur+1) % SCENES.length), 14000); }
   progress();
 }
@@ -375,6 +382,58 @@ function playPlates(s) {
   later(700, type);
 }
 
+function playDanger(s) {
+  const d = setFrame(s.img), W = d.w, H = d.h, o = d.objects[0];
+  el('polygon', {points: s.zone.map(([x,y]) => `${x*W},${y*H}`).join(' '), fill:'#ff4d4d18', stroke:'#ff9d4d', 'stroke-width':3, 'stroke-dasharray':'10 6'});
+  label(s.zone[3][0]*W, s.zone[3][1]*H + 32, s.zoneName, '#ff9d4d', 18);
+  const b = box(o, W, H, '#ffb020', 'человек · 0 с', );
+  let t = 0; $('#hud').textContent = 'людей в зоне: 1';
+  const tick = () => {
+    t++;
+    b.l.g.remove();
+    const over = t >= 2, color = over ? '#ff4d4d' : '#ffb020';
+    b.r.setAttribute('stroke', color);
+    b.l = label(o.box[0]*W, o.box[1]*H, over ? 'ОПАСНАЯ ЗОНА' : `человек · ${t} с`, color, Math.max(14, W/70));
+    if (over) {
+      toast('⚠️ Человек на крыше · Камера 22');
+      msg('⚠️ <b>Опасная зона</b> · Камера 22 · Кровля, секция 3: человек в опасной зоне');
+      return;
+    }
+    later(1000, tick);
+  };
+  later(900, tick);
+}
+
+function playFence(s) {
+  const F = D.fence, W = F.w, H = F.h;
+  $('#grid21').style.display = 'none'; $('#frame').style.display = ''; ov.style.display = '';
+  $('#view').style.aspectRatio = `${W} / ${H}`;
+  ov.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  F.frames.forEach(f => { const im = new Image(); im.src = 'demo/img/' + f.img; });   // предзагрузка
+  let k = 0;
+  const draw = () => {
+    const fr = F.frames[k];
+    $('#frame').src = 'demo/img/' + fr.img;
+    ov.innerHTML = '';
+    el('polygon', {points: F.zone.map(([x,y]) => `${x*W},${y*H}`).join(' '), fill:'#4fb3ff1c', stroke:'#4fb3ff', 'stroke-width':2.5, 'stroke-dasharray':'9 6'});
+    label(0.01*W, F.zone[5][1]*H + 24, 'Полоса вдоль забора', '#4fb3ff', 13);
+    const alarm = k >= F.alarm_index, id = String(F.alarm_id);
+    const p = fr.path[id];
+    if (p && p.length > 1) el('polyline', {points: p.map(([x,y]) => `${x*W},${y*H}`).join(' '), fill:'none', stroke: alarm ? '#ff4d4d' : '#ffb020', 'stroke-width':3, 'stroke-linecap':'round', 'stroke-linejoin':'round'});
+    fr.objects.forEach(o => {
+      const me = String(o.id) === id;
+      box(o, W, H, me ? (alarm ? '#ff4d4d' : '#ffb020') : '#38d97a', me ? (alarm ? 'ВДОЛЬ ЗАБОРА' : `#${o.id}`) : '');
+    });
+    $('#hud').textContent = `людей в кадре: ${fr.objects.length} · ${alarm ? 'тревога' : 'анализ'}`;
+    if (k === F.alarm_index) {
+      toast('🚧 Человек идёт вдоль забора · Камера 12');
+      msg('🚧 <b>Вдоль забора</b> · Камера 12 · Забор, южная сторона: человек идёт вдоль забора');
+    }
+    if (k < F.frames.length - 1) { k++; later(850, draw); }
+  };
+  draw();
+}
+
 function playHealth() {
   $('#frame').style.display = 'none'; ov.style.display = 'none';
   const g = $('#grid21'); g.style.display = 'grid'; $('#view').style.aspectRatio = '16 / 10';
@@ -399,7 +458,7 @@ function playHealth() {
 
 /* ---------- старт ---------- */
 renderSide();
-msg('KADR подключён к объекту: 50 камер, 4 сценария. Проверка уведомлений ✓', 'info');
+msg('KADR подключён к объекту: 50 камер, 6 сценариев. Проверка уведомлений ✓', 'info');
 show(0);
 $('#credits').innerHTML = 'Фото: ' + Object.values(D._credits).map(c => `<a href="${c.url}" target="_blank" rel="noopener">${c.author.replace(/</g,'')}</a> (${c.license})`).join(', ') + ' — Wikimedia Commons.';
 </script>

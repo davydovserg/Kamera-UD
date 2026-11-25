@@ -94,6 +94,15 @@ class Scenario:
         self._alerted[tid] = now
         return True
 
+    def _alert(self, tid: int, now: float, ttl: float = 3600) -> bool:
+        """Один раз на объект и не чаще паузы. Объект не «сгорает», если сработала пауза."""
+        for k in [k for k, t in self._alerted.items() if now - t > ttl]:
+            del self._alerted[k]
+        if tid in self._alerted or now - self._last_alert < float(self.cfg.get("cooldown_sec", 60)):
+            return False
+        self._alerted[tid] = self._last_alert = now
+        return True
+
     def _cooldown(self, now: float) -> bool:
         if now - self._last_alert < float(self.cfg.get("cooldown_sec", 60)):
             return False
@@ -139,10 +148,81 @@ class Intrusion(Scenario):
             t = ctx.tracks.get(d.track_id)
             if not t or ctx.ts - t.first_seen < float(self.cfg["min_sec"]):
                 continue
-            if self._once_per_track(t.id, ctx.ts) and self._cooldown(ctx.ts):
-                who = "человек" if d.cls == "person" else d.cls
-                return [f"{who} в зоне" + (" в нерабочее время" if hours else "")]
+            if self._alert(t.id, ctx.ts):
+                return [self.message(d.cls, hours)]
         return []
+
+    def message(self, cls, hours):
+        who = "человек" if cls == "person" else cls
+        return f"{who} в зоне" + (" в нерабочее время" if hours else "")
+
+
+@register
+class DangerZone(Intrusion):
+    key = "danger_zone"
+    title = "Опасная зона"
+    description = ("Человек там, где ходить нельзя или опасно: крыша, трансформаторная, котлован, "
+                   "проезд в паркинге, техэтаж. Следим круглосуточно, тревога через 2 секунды.")
+    params = [
+        {"name": "hours", "label": "Часы (пусто — всегда)", "type": "text", "default": ""},
+        {"name": "min_sec", "label": "Сколько секунд в зоне до тревоги", "type": "number", "default": 2},
+        {"name": "classes", "label": "Объекты", "type": "classes", "default": ["person"]},
+        {"name": "cooldown_sec", "label": "Пауза между сообщениями, с", "type": "number", "default": 60},
+    ]
+
+    def message(self, cls, hours):
+        return "человек в опасной зоне"
+
+
+@register
+class FenceWalk(Scenario):
+    key = "fence"
+    title = "Вдоль забора"
+    description = ("Человек ходит вдоль забора или задерживается у него: выделите полосу вдоль ограждения. "
+                   "Тревога, если он у забора дольше N секунд или прошёл вдоль него заметное расстояние.")
+    needs = "zone"
+    classes = ["person"]
+    params = [
+        {"name": "hours", "label": "Часы (пусто — всегда)", "type": "text", "default": ""},
+        {"name": "min_sec", "label": "У забора дольше, с", "type": "number", "default": 15},
+        {"name": "min_path", "label": "Или прошёл вдоль забора, % ширины кадра", "type": "number", "default": 20},
+        {"name": "cooldown_sec", "label": "Пауза между сообщениями, с", "type": "number", "default": 120},
+    ]
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.state: dict[int, dict] = {}
+
+    def process(self, ctx):
+        hours = (self.cfg.get("hours") or "").strip()
+        if hours and not in_hours(ctx.now, hours):
+            return []
+        w, h = ctx.wh
+        zone = to_px(self.zone, w, h)
+        out = []
+        for d in ctx.dets:
+            t = ctx.tracks.get(d.track_id)
+            if d.cls != "person" or not t:
+                continue
+            st = self.state.get(t.id)
+            if not in_polygon(d.bottom, zone):
+                if st:
+                    st["last_out"] = ctx.ts
+                continue
+            if not st or ctx.ts - st.get("last_out", ctx.ts) > 10:
+                st = self.state[t.id] = {"since": ctx.ts, "path": 0.0, "prev": d.bottom}
+            st.pop("last_out", None)
+            px, py = st["prev"]
+            st["path"] += ((d.bottom[0] - px) ** 2 + (d.bottom[1] - py) ** 2) ** 0.5
+            st["prev"] = d.bottom
+            secs = ctx.ts - st["since"]
+            long_stay = secs >= float(self.cfg["min_sec"])
+            walked = st["path"] / w * 100 >= float(self.cfg["min_path"])
+            if (long_stay or walked) and self._alert(t.id, ctx.ts):
+                out.append("человек идёт вдоль забора" if walked else f"человек у забора {int(secs)} с")
+        for k in [k for k, v in self.state.items() if k not in ctx.tracks]:
+            del self.state[k]
+        return out
 
 
 @register
@@ -549,7 +629,7 @@ class Health(Scenario):
 
 
 PRESETS = {
-    "ЖК": ["fire", "parking", "plates", "intrusion", "health"],
+    "ЖК": ["fire", "parking", "plates", "danger_zone", "fence", "health"],
     "Склад": ["line_cross", "intrusion", "loading", "carry_out", "health"],
     "Стройплощадка": ["intrusion", "line_cross", "health"],
 }
