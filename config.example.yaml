@@ -1,0 +1,38 @@
+# Объект KADR. Всё это можно менять из панели — файл перезаписывается.
+site: Объект
+timezone: Europe/Moscow
+panel:
+  host: 0.0.0.0
+  port: 8080
+  user: admin
+  password: change-me        # или переменная окружения KADR_PANEL_PASSWORD
+detector:
+  model: models/yolox_s.onnx # YOLOX-S, Apache-2.0, COCO
+  conf: 0.3
+  nms: 0.45
+  interval_sec: 1.0          # как часто анализировать кадр каждой камеры
+notify:
+  email:
+    enabled: false
+    smtp_host: smtp.yandex.ru
+    smtp_port: 465
+    ssl: true
+    user: ''
+    password: ''
+    from: ''
+    to: []
+  telegram:
+    enabled: false
+    token: ''
+    chat_id: ''
+journal_days: 30
+cameras: []
+# Пример камеры:
+#  - id: gate
+#    name: Въезд
+#    url: rtsp://login:pass@1.2.3.4:554/Streaming/Channels/102
+#    enabled: true
+#    scenarios:
+#      line_cross: {enabled: true, line: [[0.2, 0.6], [0.8, 0.6]]}
+#      intrusion:  {enabled: true, hours: "20:00-08:00", zone: [[0.1,0.3],[0.9,0.3],[0.9,0.95],[0.1,0.95]]}
+#      health:     {enabled: true}

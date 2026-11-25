@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+config.yaml
+config.yaml.tmp
+data/
+site/
+models/*.onnx
+*.avi
+*.mp4
+.claude/

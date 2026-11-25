@@ -1,0 +1,11 @@
+services:
+  kadr:
+    build: .
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    volumes:
+      - ./site:/data            # config.yaml и журнал объекта
+      - ./models:/app/models    # свои модели (огонь и т.п.)
+    environment:
+      - TZ=Europe/Moscow
+      - KADR_PANEL_PASSWORD=${KADR_PANEL_PASSWORD:-change-me}

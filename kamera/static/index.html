@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KADR · Камеры</title>
+<style>
+  :root { --bg:#0e1013; --panel:#16191e; --line:#262b33; --text:#e8eaed; --mute:#8a93a0;
+          --acc:#c6f432; --bad:#ff5d5d; --ok:#3ddc84; --r:10px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:24px; padding:14px 24px; border-bottom:1px solid var(--line); }
+  header b { font-size:16px; letter-spacing:.04em; } header b span { color:var(--acc); }
+  nav button { background:none; border:0; color:var(--mute); font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
+  nav button.on { color:var(--text); background:var(--panel); }
+  main { padding:24px; max-width:1300px; margin:0 auto; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:12px; margin-top:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:14px; }
+  .cam { cursor:pointer; } .cam:hover { border-color:#3a414c; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; background:var(--bad); margin-right:6px; }
+  .dot.on { background:var(--ok); }
+  .mute { color:var(--mute); font-size:12.5px; }
+  .chip { display:inline-block; font-size:12px; padding:2px 8px; border-radius:20px; background:#222730; margin:6px 4px 0 0; }
+  button.b, .b { background:var(--acc); color:#111; border:0; border-radius:8px; padding:8px 14px; font:600 13.5px system-ui; cursor:pointer; }
+  button.g { background:#232831; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button.x { background:none; border:1px solid #4a2a2a; color:var(--bad); border-radius:8px; padding:7px 12px; cursor:pointer; }
+  input, select { background:#0f1216; border:1px solid var(--line); color:var(--text); border-radius:7px; padding:7px 9px; font:inherit; width:100%; }
+  label { display:block; font-size:12.5px; color:var(--mute); margin:10px 0 4px; }
+  .split { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr); gap:16px; margin-top:16px; }
+  @media (max-width:900px){ .split{ grid-template-columns:1fr; } }
+  .view { position:relative; background:#000; border-radius:var(--r); overflow:hidden; aspect-ratio:16/9; }
+  .view img, .view canvas { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  .view canvas { cursor:crosshair; }
+  .sc { border-top:1px solid var(--line); padding:12px 0; } .sc:first-child { border-top:0; }
+  .sc h4 { margin:0; font-size:14px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .sc p { margin:4px 0 0; }
+  .sw { position:relative; width:38px; height:22px; flex:none; }
+  .sw input { opacity:0; width:0; height:0; } .sw span { position:absolute; inset:0; background:#333a45; border-radius:20px; transition:.15s; }
+  .sw span:before { content:""; position:absolute; width:16px; height:16px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.15s; }
+  .sw input:checked + span { background:var(--acc); } .sw input:checked + span:before { transform:translateX(16px); background:#111; }
+  .warn { color:#ffb347; font-size:12.5px; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; } td,th { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--mute); font-weight:500; font-size:12.5px; } td { white-space:pre-line; }
+  dialog { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:14px; width:min(520px,94vw); padding:20px; }
+  dialog::backdrop { background:#000a; }
+  .hint { background:#1c2128; border-radius:8px; padding:8px 10px; margin-top:10px; font-size:12.5px; color:var(--mute); }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+<header>
+  <b>KADR<span>·</span> <span id="site" style="color:var(--text);font-weight:500"></span></b>
+  <nav>
+    <button data-tab="cams" class="on">Камеры</button>
+    <button data-tab="events">Журнал</button>
+    <button data-tab="notify">Уведомления</button>
+  </nav>
+</header>
+<main>
+
+<section id="tab-cams">
+  <div id="list">
+    <div class="row" style="justify-content:space-between">
+      <div><h2 style="margin:0">Камеры</h2><div class="mute" id="summary"></div></div>
+      <div class="row"><button class="g" onclick="openAdd('nvr')">+ Регистратор</button><button class="b" onclick="openAdd('url')">+ Камера</button></div>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <div id="detail" class="hidden">
+    <div class="row" style="justify-content:space-between">
+      <div class="row"><button class="g" onclick="closeCam()">← Все камеры</button>
+        <h2 style="margin:0" id="d-name"></h2><span id="d-state" class="mute"></span></div>
+      <div class="row"><button class="g" onclick="editCam()">Изменить</button><button class="x" onclick="delCam()">Удалить</button></div>
+    </div>
+    <div class="split">
+      <div>
+        <div class="view"><img id="snap" alt=""><canvas id="cv"></canvas></div>
+        <div class="row" style="margin-top:10px" id="draw-bar">
+          <span class="mute" id="draw-hint">Кадр обновляется каждые 2 с. Рамки — что видит детектор.</span>
+        </div>
+      </div>
+      <div class="card" id="sc-list"></div>
+    </div>
+  </div>
+</section>
+
+<section id="tab-events" class="hidden">
+  <h2 style="margin:0 0 4px">Журнал отправок</h2>
+  <div class="mute">Хранится 30 дней. Видео и кадры не сохраняются — только текст.</div>
+  <div class="card" style="margin-top:16px;padding:0"><table><thead><tr><th>Сообщение</th><th>Доставка</th></tr></thead><tbody id="ev"></tbody></table></div>
+</section>
+
+<section id="tab-notify" class="hidden">
+  <h2 style="margin:0 0 16px">Куда слать события</h2>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+    <div class="card"><h4 style="margin:0">Объект</h4><label>Название</label><input id="n-site"></div>
+    <div class="card">
+      <h4 class="row" style="margin:0;justify-content:space-between">Почта <label class="sw"><input type="checkbox" id="e-on"><span></span></label></h4>
+      <label>Кому (через запятую)</label><input id="e-to">
+      <label>SMTP сервер</label><input id="e-host" placeholder="smtp.yandex.ru">
+      <div class="row"><div style="flex:1"><label>Порт</label><input id="e-port"></div><div style="flex:2"><label>Логин</label><input id="e-user"></div></div>
+      <label>Пароль приложения</label><input id="e-pass" type="password">
+    </div>
+    <div class="card">
+      <h4 class="row" style="margin:0;justify-content:space-between">Telegram <label class="sw"><input type="checkbox" id="t-on"><span></span></label></h4>
+      <label>Токен бота</label><input id="t-token" type="password">
+      <label>chat_id</label><input id="t-chat">
+    </div>
+  </div>
+  <div class="row" style="margin-top:16px"><button class="b" onclick="saveNotify()">Сохранить</button><button class="g" onclick="testNotify()">Отправить проверку</button><span id="n-msg" class="mute"></span></div>
+</section>
+</main>
+
+<dialog id="dlg">
+  <h3 style="margin:0 0 6px" id="dlg-title"></h3>
+  <form id="f-url" method="dialog">
+    <label>Название</label><input name="name" placeholder="Паркинг, въезд" required>
+    <label>Ссылка на поток (RTSP)</label><input name="url" placeholder="rtsp://login:pass@1.2.3.4:554/Streaming/Channels/102" required>
+    <div class="hint">Берите второй поток (substream, 640–720p) — для анализа хватает, сеть не грузит.</div>
+    <div id="preset-row"><label>Сценарии по типу объекта</label><select name="preset"></select></div>
+  </form>
+  <form id="f-nvr" method="dialog" class="hidden">
+    <div class="row"><div style="flex:1"><label>Производитель</label><select name="vendor"></select></div>
+      <div style="flex:1"><label>Тип объекта</label><select name="preset"></select></div></div>
+    <div class="row"><div style="flex:3"><label>Адрес (IP или домен)</label><input name="host" required></div>
+      <div style="flex:1"><label>Порт RTSP</label><input name="port" value="554"></div></div>
+    <div class="row"><div style="flex:1"><label>Логин</label><input name="user" required></div>
+      <div style="flex:1"><label>Пароль</label><input name="password" type="password" required></div></div>
+    <div class="row"><div style="flex:1"><label>Каналы с</label><input name="ch_from" value="1"></div>
+      <div style="flex:1"><label>по</label><input name="ch_to" value="16"></div>
+      <div style="flex:2"><label>Подпись</label><input name="prefix" value="Камера"></div></div>
+  </form>
+  <div class="row" style="margin-top:16px;justify-content:space-between">
+    <button class="g" id="dlg-probe" onclick="probeDlg()">Проверить связь</button>
+    <div class="row"><span id="dlg-msg" class="mute"></span><button class="g" onclick="dlg.close()">Отмена</button><button class="b" onclick="saveDlg()">Подключить</button></div>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const api = async (url, opt={}) => {
+  const r = await fetch(location.origin + url, {headers:{'Content-Type':'application/json'}, ...opt,
+    body: opt.body && typeof opt.body !== 'string' ? JSON.stringify(opt.body) : opt.body});
+  if (!r.ok) throw new Error((await r.json().catch(()=>({}))).detail || r.statusText);
+  return r.json();
+};
+let META, CAMS = [], CUR = null, DRAW = null, dlgMode = 'url', editId = null;
+const SC = k => META.scenarios.find(s => s.key === k);
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  ['cams','events','notify'].forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== b.dataset.tab));
+  if (b.dataset.tab === 'events') loadEvents();
+  if (b.dataset.tab === 'notify') loadNotify();
+});
+
+async function init() {
+  META = await api('/api/meta');
+  $('#site').textContent = META.site;
+  const presets = '<option value="">Без сценариев — выберу сам</option>' + Object.entries(META.presets)
+    .map(([k,v]) => `<option value="${k}">${k}: ${v.map(x=>SC(x).title).join(', ')}</option>`).join('');
+  document.querySelectorAll('select[name=preset]').forEach(s => s.innerHTML = presets);
+  $('#f-nvr [name=vendor]').innerHTML = META.vendors.map(v => `<option>${v}</option>`).join('');
+  await loadCams();
+  setInterval(loadCams, 5000);
+}
+
+async function loadCams() {
+  CAMS = await api('/api/cameras');
+  const on = CAMS.filter(c => c.online).length;
+  $('#summary').textContent = CAMS.length ? `${CAMS.length} камер, в сети ${on}` : 'Камер пока нет — добавьте по ссылке или весь регистратор';
+  $('#grid').innerHTML = CAMS.map(c => {
+    const act = Object.entries(c.scenarios).filter(([,v]) => v.enabled).map(([k]) => SC(k)?.title || k);
+    return `<div class="card cam" onclick="openCam('${c.id}')">
+      <div><span class="dot ${c.online?'on':''}"></span><b>${esc(c.name)}</b></div>
+      <div class="mute">${c.online ? 'в сети · ' + c.fps + ' к/с анализа' : esc(c.error || 'нет связи')}</div>
+      <div>${act.length ? act.map(t=>`<span class="chip">${esc(t)}</span>`).join('') : '<span class="mute">сценарии не выбраны</span>'}</div></div>`;
+  }).join('');
+  if (CUR) renderDetailHead();
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const cam = () => CAMS.find(c => c.id === CUR);
+
+/* ---------- карточка камеры ---------- */
+let snapTimer;
+function openCam(id) {
+  CUR = id; DRAW = null;
+  $('#list').classList.add('hidden'); $('#detail').classList.remove('hidden');
+  renderDetailHead(); renderScenarios(); refreshSnap();
+  clearInterval(snapTimer); snapTimer = setInterval(refreshSnap, 2000);
+}
+function closeCam() { CUR = null; clearInterval(snapTimer); $('#detail').classList.add('hidden'); $('#list').classList.remove('hidden'); }
+function renderDetailHead() {
+  const c = cam(); if (!c) return closeCam();
+  $('#d-name').textContent = c.name;
+  $('#d-state').innerHTML = `<span class="dot ${c.online?'on':''}"></span>${c.online ? 'в сети' : esc(c.error||'нет связи')} · ${esc(c.url)}`;
+}
+function refreshSnap() {
+  const img = new Image();
+  img.onload = () => { $('#snap').src = img.src; drawOverlay(); };
+  img.src = `/api/cameras/${CUR}/snapshot.jpg?t=${Date.now()}`;
+}
+
+function renderScenarios() {
+  const c = cam();
+  $('#sc-list').innerHTML = '<h3 style="margin:0 0 6px">Сценарии</h3>' + META.scenarios.map(s => {
+    const p = c.scenarios[s.key] || {}, on = !!p.enabled, st = c.scenario_status[s.key];
+    const fields = s.params.map(f => {
+      const v = p[f.name] ?? f.default;
+      if (f.type === 'bool') return `<label><input type="checkbox" style="width:auto" data-f="${f.name}" ${v?'checked':''}> ${esc(f.label)}</label>`;
+      if (f.type === 'classes') return `<label>${esc(f.label)}</label><input data-f="${f.name}" data-t="list" value="${esc((v||[]).join(', '))}">`;
+      return `<label>${esc(f.label)}</label><input data-f="${f.name}" data-t="${f.type}" value="${esc(v)}">`;
+    }).join('');
+    const geo = s.needs ? `<div class="row" style="margin-top:10px"><button class="g" onclick="startDraw('${s.key}')">${s.needs==='zone'?'Нарисовать зону':'Нарисовать линию'}</button>
+      <span class="mute">${(p[s.needs]||[]).length ? (s.needs==='zone' ? 'зона задана' : 'линия задана') : (s.needs==='zone' ? 'зона не задана — весь кадр' : 'линия не задана')}</span></div>` : '';
+    return `<div class="sc" id="sc-${s.key}">
+      <h4>${esc(s.title)} ${s.available ? `<label class="sw"><input type="checkbox" ${on?'checked':''} onchange="toggleSc('${s.key}', this.checked)"><span></span></label>` : '<span class="chip">скоро</span>'}</h4>
+      <p class="mute">${esc(s.description)}</p>
+      ${on && st && st !== 'работает' ? `<div class="warn">${esc(st)}</div>` : ''}
+      ${on ? `<div>${fields}${geo}<div class="row" style="margin-top:10px"><button class="b" onclick="saveSc('${s.key}')">Сохранить</button></div></div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function readFields(key) {
+  const out = {};
+  document.querySelectorAll(`#sc-${key} [data-f]`).forEach(el => {
+    const t = el.dataset.t;
+    out[el.dataset.f] = el.type === 'checkbox' ? el.checked : t === 'number' ? Number(el.value)
+      : t === 'list' ? el.value.split(',').map(x=>x.trim()).filter(Boolean) : el.value;
+  });
+  return out;
+}
+async function putSc(key, params) {
+  await api(`/api/cameras/${CUR}/scenarios/${key}`, {method:'PUT', body: params});
+  await loadCams(); renderScenarios();
+}
+function toggleSc(key, on) { putSc(key, {...(cam().scenarios[key]||{}), enabled: on}); }
+function saveSc(key) { putSc(key, {...(cam().scenarios[key]||{}), ...readFields(key), enabled: true}); }
+
+/* ---------- рисование зон и линий ---------- */
+const cv = $('#cv');
+function startDraw(key) {
+  const s = SC(key);
+  DRAW = {key, kind: s.needs, pts: []};
+  $('#draw-bar').innerHTML = `<span class="mute">${s.needs==='zone' ? 'Кликайте по углам зоны (от 3 точек)' : 'Две точки: начало и конец линии ворот'}.</span>
+    <button class="b" onclick="finishDraw()">Готово</button><button class="g" onclick="DRAW.pts=[];drawOverlay()">Заново</button>
+    <button class="g" onclick="finishDraw(true)">Убрать</button><button class="g" onclick="cancelDraw()">Отмена</button>`;
+  drawOverlay();
+}
+function cancelDraw() { DRAW = null; $('#draw-bar').innerHTML = '<span class="mute">Кадр обновляется каждые 2 с.</span>'; drawOverlay(); }
+async function finishDraw(clear) {
+  const {key, kind, pts} = DRAW;
+  if (!clear && (kind === 'zone' ? pts.length < 3 : pts.length !== 2)) return alert(kind === 'zone' ? 'Нужно минимум 3 точки' : 'Нужно ровно 2 точки');
+  const p = {...(cam().scenarios[key]||{}), ...readFields(key), enabled: true, [kind]: clear ? [] : pts.map(([x,y]) => [+x.toFixed(4), +y.toFixed(4)])};
+  cancelDraw(); await putSc(key, p);
+}
+function imgRect() {   // где картинка внутри холста (object-fit: contain)
+  const img = $('#snap'), W = cv.clientWidth, H = cv.clientHeight;
+  const iw = img.naturalWidth || 16, ih = img.naturalHeight || 9, k = Math.min(W/iw, H/ih);
+  return {x:(W-iw*k)/2, y:(H-ih*k)/2, w:iw*k, h:ih*k};
+}
+cv.addEventListener('click', e => {
+  if (!DRAW) return;
+  const r = imgRect(), b = cv.getBoundingClientRect();
+  const x = (e.clientX - b.left - r.x) / r.w, y = (e.clientY - b.top - r.y) / r.h;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  if (DRAW.kind === 'line' && DRAW.pts.length >= 2) DRAW.pts = [];
+  DRAW.pts.push([x, y]); drawOverlay();
+});
+function drawOverlay() {
+  const dpr = devicePixelRatio || 1;
+  cv.width = cv.clientWidth * dpr; cv.height = cv.clientHeight * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const r = imgRect(), c = cam(); if (!c) return;
+  const P = ([x,y]) => [r.x + x*r.w, r.y + y*r.h];
+  const shape = (pts, kind, color, label) => {
+    if (!pts?.length) return;
+    g.strokeStyle = color; g.fillStyle = color + '33'; g.lineWidth = 2;
+    g.beginPath(); pts.forEach((p,i) => { const [X,Y] = P(p); i ? g.lineTo(X,Y) : g.moveTo(X,Y); });
+    if (kind === 'zone' && pts.length > 2) { g.closePath(); g.fill(); }
+    g.stroke();
+    pts.forEach(p => { const [X,Y] = P(p); g.fillStyle = color; g.fillRect(X-3,Y-3,6,6); });
+    if (label) { const [X,Y] = P(pts[0]); g.fillStyle = color; g.font = '12px system-ui'; g.fillText(label, X+6, Y-6); }
+  };
+  if (DRAW) return shape(DRAW.pts, DRAW.kind, '#c6f432', SC(DRAW.key).title);
+  for (const [k, p] of Object.entries(c.scenarios)) {
+    const s = SC(k); if (!s || !p.enabled || !s.needs) continue;
+    shape(p[s.needs], s.needs, '#4fb3ff', s.title);
+  }
+}
+addEventListener('resize', drawOverlay);
+
+/* ---------- добавление камер ---------- */
+const dlg = $('#dlg');
+function openAdd(mode, c) {
+  dlgMode = mode; editId = c?.id || null;
+  $('#f-url').classList.toggle('hidden', mode !== 'url'); $('#f-nvr').classList.toggle('hidden', mode !== 'nvr');
+  $('#dlg-title').textContent = c ? 'Камера' : mode === 'url' ? 'Новая камера' : 'Регистратор целиком';
+  $('#preset-row').classList.toggle('hidden', !!c);
+  $('#dlg-msg').textContent = '';
+  const f = $('#f-url'); f.name.value = c?.name || ''; f.url.value = c?.url || '';
+  $('#dlg-probe').classList.toggle('hidden', mode !== 'url');
+  dlg.showModal();
+}
+function editCam() { openAdd('url', cam()); }
+const formData = f => Object.fromEntries(new FormData(f).entries());
+async function probeDlg() {
+  $('#dlg-msg').textContent = 'проверяю…';
+  const r = await api('/api/probe', {method:'POST', body:{url: $('#f-url').url.value, id: editId}}).catch(e => ({ok:false, info:e.message}));
+  $('#dlg-msg').textContent = r.ok ? '✓ есть картинка ' + r.info : '✗ ' + r.info;
+}
+async function saveDlg() {
+  const f = dlgMode === 'url' ? $('#f-url') : $('#f-nvr');
+  if (!f.reportValidity()) return;
+  $('#dlg-msg').textContent = 'подключаю…';
+  try {
+    if (dlgMode === 'url') await api('/api/cameras', {method:'POST', body:{...formData(f), id: editId || undefined}});
+    else { const r = await api('/api/nvr', {method:'POST', body: formData(f)}); alert(`Добавлено каналов: ${r.added.length}. Каналы без камер покажутся «нет связи» — их можно удалить.`); }
+    dlg.close(); await loadCams(); if (CUR) { renderDetailHead(); renderScenarios(); }
+  } catch (e) { $('#dlg-msg').textContent = '✗ ' + e.message; }
+}
+async function delCam() {
+  if (!confirm('Удалить камеру и её сценарии?')) return;
+  await api('/api/cameras/' + CUR, {method:'DELETE'}); closeCam(); loadCams();
+}
+
+/* ---------- журнал и уведомления ---------- */
+async function loadEvents() {
+  const ev = await api('/api/events');
+  $('#ev').innerHTML = ev.length ? ev.map(e => `<tr><td>${esc(e.text)}</td><td class="mute">${esc(e.sent)}</td></tr>`).join('')
+    : '<tr><td colspan="2" class="mute">Событий пока нет</td></tr>';
+}
+async function loadNotify() {
+  const n = await api('/api/notify');
+  $('#n-site').value = n.site; $('#e-on').checked = n.email.enabled; $('#e-to').value = (n.email.to||[]).join(', ');
+  $('#e-host').value = n.email.smtp_host; $('#e-port').value = n.email.smtp_port; $('#e-user').value = n.email.user; $('#e-pass').value = n.email.password;
+  $('#t-on').checked = n.telegram.enabled; $('#t-token').value = n.telegram.token; $('#t-chat').value = n.telegram.chat_id;
+}
+async function saveNotify() {
+  await api('/api/notify', {method:'PUT', body:{site: $('#n-site').value,
+    email:{enabled: $('#e-on').checked, to: $('#e-to').value, smtp_host: $('#e-host').value, smtp_port: Number($('#e-port').value)||465,
+           user: $('#e-user').value, from: $('#e-user').value, password: $('#e-pass').value},
+    telegram:{enabled: $('#t-on').checked, token: $('#t-token').value, chat_id: $('#t-chat').value}}});
+  $('#n-msg').textContent = 'сохранено'; $('#site').textContent = $('#n-site').value;
+}
+async function testNotify() { await api('/api/notify/test', {method:'POST'}); $('#n-msg').textContent = 'отправлено — смотрите Журнал'; }
+
+init().catch(e => document.body.insertAdjacentHTML('afterbegin', `<div style="padding:20px;color:#ff5d5d">${esc(e.message)}</div>`));
+</script>
+</body>
+</html>
