@@ -1,5 +1,7 @@
 # KADR · Kamera-UD
 
+**Демо для заказчика (ЖК):** https://davydovserg.github.io/Kamera-UD/
+
 Своя видеоаналитика KADR. Клиент даёт доступ к камерам или регистратору, мы подключаем их в панели, включаем нужные сценарии, и события сразу уходят на почту или в Telegram.
 
 - Сообщение содержит только текст: время, камеру и сценарий. Видео клиент смотрит у себя.
@@ -78,3 +80,12 @@ kamera/notify.py      почта, Telegram, журнал 30 дней
 kamera/web.py         API панели
 kamera/static/        панель (один HTML)
 ```
+
+## Обучение модели огня (train/)
+
+1. `train/dfire_to_coco.py <dfire_yolo>` — D-Fire (CC0, 21 527 кадров) → COCO, классы fire, smoke.
+2. Из клона YOLOX: `python tools/train.py -f train/exp_fire.py -d 1 -b 16 --fp16 -c yolox_tiny.pth` (переменные DFIRE, EPOCHS).
+3. `python tools/export_onnx.py -f train/exp_fire.py -c best_ckpt.pth --output-name models/fire.onnx` — сценарий «Огонь» подхватит модель сам.
+
+На RTX 3050 Laptop одна эпоха ≈ 20 мин (30 эпох ≈ 10 ч); быстрее на облачной GPU.
+`train/make_demo.py` — прогоняет модели по кадрам для демо-страницы.
