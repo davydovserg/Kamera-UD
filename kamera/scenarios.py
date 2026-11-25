@@ -275,13 +275,14 @@ class Loading(Scenario):
 class Fire(Scenario):
     key = "fire"
     title = "Огонь"
-    description = ("Открытое пламя в кадре. Нужна обученная модель огня (YOLOX ONNX, класс fire). "
-                   "Тревога, только если огонь виден на нескольких кадрах подряд.")
+    description = ("Открытое пламя. Базовый режим работает сразу: цвет пламени + мерцание (лампы и фары "
+                   "не мерцают так), подтверждение по нескольким кадрам. Если положить обученную модель "
+                   "models/fire.onnx (YOLOX, классы fire, smoke) — используется она.")
     needs = "zone"
-    model_param = "model"
     params = [
-        {"name": "model", "label": "Файл модели огня", "type": "text", "default": "models/fire.onnx"},
-        {"name": "conf", "label": "Уверенность (0–1)", "type": "number", "default": 0.45},
+        {"name": "model", "label": "Файл модели огня (нет файла — базовый режим)", "type": "text", "default": "models/fire.onnx"},
+        {"name": "conf", "label": "Уверенность модели (0–1)", "type": "number", "default": 0.45},
+        {"name": "min_area", "label": "Мин. площадь пламени, % кадра (базовый режим)", "type": "number", "default": 0.05},
         {"name": "confirm", "label": "Кадров с огнём из последних 5", "type": "number", "default": 3},
         {"name": "cooldown_sec", "label": "Пауза между сообщениями, с", "type": "number", "default": 300},
     ]
@@ -290,39 +291,206 @@ class Fire(Scenario):
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self.hist = deque(maxlen=5)
+        self.prev_mask = None
+
+    def status(self):
+        return "работает (модель)" if self._detector() else "работает (базовый режим, без модели)"
 
     def _detector(self):
-        path = os.path.join(self.base_dir, self.cfg["model"])
-        if not os.path.isfile(path):
+        rel = (self.cfg.get("model") or "").strip()
+        path = os.path.join(self.base_dir, rel) if rel else ""
+        if not path or not os.path.isfile(path):
             return None
         if path not in Fire._models:
             from .detector import YoloxDetector
             Fire._models[path] = YoloxDetector(path, classes=["fire", "smoke"], conf=float(self.cfg["conf"]))
         return Fire._models[path]
 
+    def _basic(self, frame, zone_px) -> bool:
+        import cv2
+        k = 320 / frame.shape[1]
+        small = cv2.resize(frame, (320, int(frame.shape[0] * k)))
+        b, g, r = [c.astype(np.int16) for c in cv2.split(small)]
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        mask = (r > 180) & (r >= g) & (g > b) & ((r - b) > 70) & (hsv[..., 1] > 70) & (hsv[..., 2] > 170)
+        if zone_px and len(zone_px) >= 3:
+            zm = np.zeros(mask.shape, np.uint8)
+            cv2.fillPoly(zm, [np.array([(x * k, y * k) for x, y in zone_px], np.int32)], 1)
+            mask &= zm.astype(bool)
+        mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8)).astype(bool)
+        prev, self.prev_mask = self.prev_mask, mask
+        if mask.mean() * 100 < float(self.cfg["min_area"]) or prev is None:
+            return False
+        union = (mask | prev).sum()
+        flicker = (mask ^ prev).sum() / union if union else 0
+        return flicker > 0.25  # пламя меняет форму между кадрами, лампа и фара — нет
+
     def process(self, ctx):
-        det = self._detector()
-        if det is None:
-            return []
         w, h = ctx.wh
         zone = to_px(self.zone, w, h)
-        fires = [d for d in det.detect(ctx.frame, only={"fire"}) if in_polygon(d.center, zone)]
-        self.hist.append(bool(fires))
+        det = self._detector()
+        if det:
+            seen = any(in_polygon(d.center, zone) for d in det.detect(ctx.frame, only={"fire"}))
+        else:
+            seen = self._basic(ctx.frame, zone)
+        self.hist.append(seen)
         if sum(self.hist) >= int(self.cfg["confirm"]) and self._cooldown(ctx.ts):
             return ["обнаружен огонь"]
         return []
+
+
+LAT2CYR = str.maketrans("ABEKMHOPCTYX", "АВЕКМНОРСТУХ")
+CYR2LAT = str.maketrans("АВЕКМНОРСТУХ", "ABEKMHOPCTYX")
+
+
+def norm_plate(t: str) -> str:
+    return "".join(ch for ch in (t or "").upper().translate(CYR2LAT) if ch.isalnum())
 
 
 @register
 class Plates(Scenario):
     key = "plates"
     title = "Номера машин"
-    description = ("Журнал номеров на въезде и сверка со списком жителей. "
-                   "Подключается отдельной моделью номеров + OCR — в разработке.")
+    description = ("Читает номера машин в зоне, ведёт журнал и сверяет со списком жителей. "
+                   "Модели номеров и OCR (MIT) скачиваются сами при первом включении. "
+                   "Камера: номер от 120 px по ширине, угол до 30°.")
+    needs = "zone"
+    classes = VEHICLES
+    params = [
+        {"name": "residents", "label": "Номера жителей через запятую (пусто — без сверки)", "type": "text", "default": ""},
+        {"name": "notify", "label": "Сообщать", "type": "select", "default": "unknown",
+         "options": [["unknown", "только о чужих"], ["all", "о каждой машине"], ["none", "не сообщать, только сводка"]]},
+        {"name": "min_reads", "label": "Сколько раз прочитать одинаково", "type": "number", "default": 2},
+        {"name": "repeat_min", "label": "Не повторять тот же номер, мин", "type": "number", "default": 10},
+        {"name": "summary_at", "label": "Сводка номеров за день в (ЧЧ:ММ, пусто — нет)", "type": "text", "default": ""},
+    ]
+    _alpr = None
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.reads: dict[str, list[float]] = {}
+        self.last_sent: dict[str, float] = {}
+        self.day: list[str] = []
+        self._sum = {}
+
+    @classmethod
+    def alpr(cls):
+        if cls._alpr is None:
+            from fast_alpr import ALPR
+            cls._alpr = ALPR(ocr_model="global-plates-mobile-vit-v2-model", ocr_device="auto")
+        return cls._alpr
+
+    def status(self):
+        try:
+            import fast_alpr  # noqa: F401
+            return "работает"
+        except ImportError:
+            return "нужен пакет: pip install fast-alpr"
+
+    def residents(self) -> set:
+        return {norm_plate(x) for x in str(self.cfg.get("residents") or "").split(",") if x.strip()}
+
+    def process(self, ctx):
+        w, h = ctx.wh
+        zone = to_px(self.zone, w, h)
+        if not any(d.cls in self.wanted_classes() and in_polygon(d.bottom, zone) for d in ctx.dets):
+            return []
+        out = []
+        for r in self.alpr().predict(ctx.frame):
+            if not r.ocr or not r.ocr.text:
+                continue
+            bb = r.detection.bounding_box
+            if zone and not in_polygon(((bb.x1 + bb.x2) / 2, (bb.y1 + bb.y2) / 2), zone):
+                continue
+            conf = r.ocr.confidence
+            conf = float(np.mean(conf)) if isinstance(conf, (list, tuple, np.ndarray)) else float(conf or 0)
+            plate = norm_plate(r.ocr.text)
+            if len(plate) < 6 or conf < 0.5:
+                continue
+            hist = [t for t in self.reads.get(plate, []) if ctx.ts - t < 60] + [ctx.ts]
+            self.reads[plate] = hist
+            if len(hist) < int(self.cfg["min_reads"]):
+                continue
+            if ctx.ts - self.last_sent.get(plate, 0) < float(self.cfg["repeat_min"]) * 60:
+                continue
+            self.last_sent[plate] = ctx.ts
+            shown = plate.translate(LAT2CYR)
+            res = self.residents()
+            known = (plate in res) if res else None
+            tag = "" if known is None else (" — житель" if known else " — НЕТ в списке жителей")
+            self.day.append(f"{ctx.now:%H:%M} {shown}{tag}")
+            mode = self.cfg["notify"]
+            if mode == "all" or (mode == "unknown" and known is False):
+                out.append(f"номер {shown}{tag}")
+        for p in [p for p, v in self.reads.items() if ctx.ts - v[-1] > 120]:
+            del self.reads[p]
+        return out
+
+    def tick(self, now):
+        if _summary_due(self._sum, now, self.cfg.get("summary_at")):
+            items, self.day = self.day, []
+            return [f"номера за день ({len(items)}):\n" + ("\n".join(items) or "машин не было")]
+        return []
+
+
+CARRY = ["suitcase", "backpack", "handbag", "bicycle", "chair", "tv", "laptop", "microwave",
+         "refrigerator", "oven", "couch", "bench"]
+
+
+@register
+class CarryOut(Scenario):
+    key = "carry_out"
+    title = "Вынос"
+    description = ("Человек выходит через линию проходной или ворот с предметом: сумка, техника, мебель — "
+                   "или несёт что-то крупное перед собой (широкий силуэт). "
+                   "Стрелка на линии показывает направление «туда».")
     needs = "line"
-    model_param = "model"
-    available = False
-    params = [{"name": "model", "label": "Файл модели номеров", "type": "text", "default": "models/plates.onnx"}]
+    classes = ["person"] + CARRY
+    params = [
+        {"name": "exit_dir", "label": "Выход — это", "type": "select", "default": "in",
+         "options": [["in", "по стрелке («туда»)"], ["out", "против стрелки"]]},
+        {"name": "hours", "label": "Когда следить (пусто — всегда)", "type": "text", "default": ""},
+        {"name": "wide_ratio", "label": "Широкий силуэт: ширина/высота больше", "type": "number", "default": 0.62},
+        {"name": "cooldown_sec", "label": "Пауза между сообщениями, с", "type": "number", "default": 30},
+    ]
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._done: dict[int, float] = {}
+        self.ratios: dict[int, deque] = {}
+
+    def process(self, ctx):
+        if len(self.line) != 2:
+            return []
+        hours = (self.cfg.get("hours") or "").strip()
+        if hours and not in_hours(ctx.now, hours):
+            return []
+        from .tracker import iou
+        w, h = ctx.wh
+        line = to_px(self.line, w, h)
+        want = 1 if self.cfg["exit_dir"] == "in" else -1
+        items = [d for d in ctx.dets if d.cls in CARRY]
+        out = []
+        for d in ctx.dets:
+            t = ctx.tracks.get(d.track_id)
+            if d.cls != "person" or not t:
+                continue
+            x1, y1, x2, y2 = d.box
+            self.ratios.setdefault(t.id, deque(maxlen=5)).append((x2 - x1) / max(1.0, y2 - y1))
+            if len(t.path) < 2 or t.id in self._done or crossed(t.path[-2], t.path[-1], line) != want:
+                continue
+            self._done[t.id] = ctx.ts
+            pad = 0.3 * (x2 - x1)
+            near = [i.cls for i in items if iou(i.box, d.box) > 0.05
+                    or (x1 - pad < i.center[0] < x2 + pad and y1 < i.center[1] < y2)]
+            wide = float(np.median(self.ratios[t.id])) > float(self.cfg["wide_ratio"])
+            if (near or wide) and self._cooldown(ctx.ts):
+                what = ", ".join(sorted(set(near))) if near else "крупный предмет в руках"
+                out.append(f"человек вышел с предметом: {what}")
+        for k in [k for k, v in self._done.items() if ctx.ts - v > 600]:
+            self._done.pop(k, None)
+            self.ratios.pop(k, None)
+        return out
 
 
 @register
@@ -381,7 +549,7 @@ class Health(Scenario):
 
 
 PRESETS = {
-    "ЖК": ["fire", "parking", "intrusion", "health"],
-    "Склад": ["line_cross", "intrusion", "loading", "health"],
+    "ЖК": ["fire", "parking", "plates", "intrusion", "health"],
+    "Склад": ["line_cross", "intrusion", "loading", "carry_out", "health"],
     "Стройплощадка": ["intrusion", "line_cross", "health"],
 }

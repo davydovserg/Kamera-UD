@@ -211,6 +211,7 @@ function renderScenarios() {
     const fields = s.params.map(f => {
       const v = p[f.name] ?? f.default;
       if (f.type === 'bool') return `<label><input type="checkbox" style="width:auto" data-f="${f.name}" ${v?'checked':''}> ${esc(f.label)}</label>`;
+      if (f.type === 'select') return `<label>${esc(f.label)}</label><select data-f="${f.name}">${f.options.map(([k,t]) => `<option value="${esc(k)}" ${k===v?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
       if (f.type === 'classes') return `<label>${esc(f.label)}</label><input data-f="${f.name}" data-t="list" value="${esc((v||[]).join(', '))}">`;
       return `<label>${esc(f.label)}</label><input data-f="${f.name}" data-t="${f.type}" value="${esc(v)}">`;
     }).join('');
@@ -284,6 +285,13 @@ function drawOverlay() {
     if (kind === 'zone' && pts.length > 2) { g.closePath(); g.fill(); }
     g.stroke();
     pts.forEach(p => { const [X,Y] = P(p); g.fillStyle = color; g.fillRect(X-3,Y-3,6,6); });
+    if (kind === 'line' && pts.length === 2) {   // стрелка «туда»: правая сторона от точки 1 к точке 2
+      const [ax,ay] = P(pts[0]), [bx,by] = P(pts[1]), mx = (ax+bx)/2, my = (ay+by)/2;
+      let nx = -(by-ay), ny = bx-ax; const L = Math.hypot(nx,ny) || 1; nx = nx/L*28; ny = ny/L*28;
+      g.beginPath(); g.moveTo(mx,my); g.lineTo(mx+nx,my+ny); g.stroke();
+      g.beginPath(); g.arc(mx+nx, my+ny, 4, 0, 7); g.fillStyle = color; g.fill();
+      g.font = '12px system-ui'; g.fillText('туда', mx+nx+6, my+ny+4);
+    }
     if (label) { const [X,Y] = P(pts[0]); g.fillStyle = color; g.font = '12px system-ui'; g.fillText(label, X+6, Y-6); }
   };
   if (DRAW) return shape(DRAW.pts, DRAW.kind, '#c6f432', SC(DRAW.key).title);

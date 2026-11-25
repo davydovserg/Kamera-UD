@@ -46,6 +46,17 @@ class IouTracker:
                 v = iou(t.box, d.box)
                 if v > best_iou:
                     best, best_iou = t, v
+            if best is None:  # анализ ~1 к/с: быстрый объект уходит дальше своей рамки — ищем ближайший
+                dx_max = 1.5 * max(d.box[2] - d.box[0], d.box[3] - d.box[1])
+                cx, cy = d.center
+                best_dist = dx_max
+                for t in self.tracks.values():
+                    if t.id in used or t.cls != d.cls or now - t.last_seen > 3:
+                        continue
+                    tx, ty = (t.box[0] + t.box[2]) / 2, (t.box[1] + t.box[3]) / 2
+                    dist = ((tx - cx) ** 2 + (ty - cy) ** 2) ** 0.5
+                    if dist < best_dist:
+                        best, best_dist = t, dist
             if best is None:
                 best = Track(self._next, d.cls, d.box, now, now)
                 self.tracks[best.id] = best
